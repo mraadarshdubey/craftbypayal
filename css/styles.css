@@ -679,7 +679,8 @@ main + .footer { padding-top: 84px; }
   display: flex; flex-direction: column; box-shadow: var(--sh-float);
   transition: transform 300ms var(--ease);
 }
-.drawer__panel--left { left: 0; width: min(360px, 88%); transform: translateX(-100%); }
+.drawer__panel--left { left: 0; width: min(360px, 88%); transform: translateX(-100%); overflow-y: auto; overscroll-behavior-y: contain; }
+.drawer__panel--left > * { flex-shrink: 0; }
 .drawer__panel--right { right: 0; transform: translateX(100%); }
 .drawer.is-open .drawer__backdrop { opacity: 1; }
 .drawer.is-open .drawer__panel { transform: none; }

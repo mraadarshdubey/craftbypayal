@@ -1,64 +1,76 @@
+/* Navigation must be interactive before any catalogue request completes. */
+const CBP_DRAWERS = (() => {
+  const menu = document.querySelector('[data-drawer]');
+  const cart = document.querySelector('[data-cart]');
+  const timers = new WeakMap();
+  let active = null, lastFocus = null;
+  const focusables = el => [...el.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), [tabindex="0"]')].filter(n => n.getClientRects().length);
+  const expanded = (el, value) => document.querySelectorAll('[aria-controls="' + el.id + '"]').forEach(b => b.setAttribute('aria-expanded', String(value)));
+  if (menu) {
+    menu.setAttribute('role', 'dialog');
+    menu.setAttribute('aria-modal', 'true');
+    menu.setAttribute('aria-label', 'Mobile menu');
+  }
+  function close(el, restoreFocus = true) {
+    if (!el || el.hidden || active !== el) return;
+    active = null;
+    el.classList.remove('is-open');
+    expanded(el, false);
+    const finish = () => {
+      el.hidden = true;
+      timers.delete(el);
+      if (!active) document.body.classList.remove('lock');
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) finish();
+    else timers.set(el, setTimeout(finish, 300));
+    if (restoreFocus && lastFocus?.isConnected) lastFocus.focus();
+  }
+  function open(el, trigger) {
+    if (!el || active === el) return;
+    if (active) close(active, false);
+    clearTimeout(timers.get(el));
+    timers.delete(el);
+    lastFocus = trigger || document.activeElement;
+    active = el;
+    el.hidden = false;
+    document.body.classList.add('lock');
+    expanded(el, true);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (active === el) el.classList.add('is-open');
+    }));
+    focusables(el)[0]?.focus();
+  }
+  document.addEventListener('click', e => {
+    const trigger = e.target.closest('[data-open-drawer]');
+    if (trigger) open(menu, trigger);
+    else if (e.target.closest('[data-close-drawer]')) close(menu);
+    else if (e.target.closest('[data-open-cart]')) open(cart, e.target.closest('[data-open-cart]'));
+    else if (e.target.closest('[data-close-cart]')) close(cart);
+  });
+  document.addEventListener('keydown', e => {
+    if (!active) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(active); return; }
+    if (e.key !== 'Tab') return;
+    const items = focusables(active), first = items[0], last = items[items.length - 1];
+    if (!first) { e.preventDefault(); return; }
+    if (e.shiftKey && (document.activeElement === first || !active.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !active.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+  });
+  return { open, close };
+})();
+
 window.CBP_READY = (async () => {
+  try { await window.CBP_CATALOG_READY; } catch (err) { console.error('Catalogue unavailable, using bundled products', err); }
+  'use strict';
+
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-  /* ---------- Drawers (menu + cart) ----------
-     Bound BEFORE the catalogue fetch below so the hamburger / cart buttons work
-     immediately on load. The live catalogue request can take several seconds on
-     mobile networks (up to its 12s timeout); the menu must never wait for it. */
-  let lastFocus = null;
-  function openDrawer(el, trigger) {
-    if (!el) return;
-    lastFocus = trigger || document.activeElement;
-    el.hidden = false;
-    document.body.classList.add('lock');
-    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('is-open')));
-    $$('[aria-controls="' + el.id + '"]').forEach(b => b.setAttribute('aria-expanded', 'true'));
-    const focusable = $('button, a', $('.drawer__panel', el));
-    focusable && focusable.focus();
-  }
-  function closeDrawer(el) {
-    if (!el || el.hidden) return;
-    el.classList.remove('is-open');
-    $$('[aria-controls="' + el.id + '"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
-    const done = () => { el.hidden = true; document.body.classList.remove('lock'); };
-    matchMedia('(prefers-reduced-motion: reduce)').matches ? done() : setTimeout(done, 300);
-    lastFocus && lastFocus.focus && lastFocus.focus();
-  }
-  function trapFocus(el, e) {
-    if (!el || e.key !== 'Tab' || el.hidden) return;
-    const f = $$('a[href], button:not([disabled]), input', $('.drawer__panel', el)).filter(n => n.offsetParent);
-    if (!f.length) return;
-    const first = f[0], last = f[f.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  }
-
-  const menuDrawer = $('[data-drawer]');
-  const cartDrawer = $('[data-cart]');
-  // Event delegation: links injected into the drawer later (gift types) also close it.
-  document.addEventListener('click', e => {
-    const t = e.target;
-    if (t.closest('[data-open-drawer]')) openDrawer(menuDrawer, t.closest('[data-open-drawer]'));
-    else if (t.closest('[data-close-drawer]')) closeDrawer(menuDrawer);
-    else if (t.closest('[data-open-cart]')) openDrawer(cartDrawer, t.closest('[data-open-cart]'));
-    else if (t.closest('[data-close-cart]')) closeDrawer(cartDrawer);
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeDrawer(menuDrawer); closeDrawer(cartDrawer); }
-    trapFocus(menuDrawer, e); trapFocus(cartDrawer, e);
-  });
-
-  // Live catalogue (slow network / offline safe): if it fails, fall back to the bundled catalogue.
-  try { await window.CBP_CATALOG_READY; } catch (err) { console.error('Catalogue unavailable, using bundled products', err); }
   const products = window.CBP_PRODUCTS || [];          // homepage favourites
   const catalog = window.CBP_CATALOG || [];             // full catalogue (shared across pages)
   const siteRoot=new URL('../',document.querySelector('script[src$="main.js"]').src);
   const types=window.CBP_GIFT_TYPES.filter(t=>t.enabled&&catalog.some(p=>p.collection===t.id));
   const giftLink=t=>new URL('collections/all.html?giftType='+encodeURIComponent(t.id),siteRoot).href;
-  $$('[data-gift-type-menu]').forEach(menu=>{menu.innerHTML=`<a href="${new URL('collections/all.html',siteRoot).href}">All Gifts</a>`+types.map(t=>`<a href="${giftLink(t)}">${esc(t.name)}</a>`).join('');});
-  $$('[data-gift-type-mobile]').forEach(item=>{item.innerHTML=types.map(t=>`<a href="${giftLink(t)}" data-close-drawer>${esc(t.name)}</a>`).join('');});
   $$('[data-gift-type-cards]').forEach(grid=>{grid.innerHTML=types.map(t=>{const first=catalog.find(p=>p.collection===t.id);return `<li><a class="col-card" href="${giftLink(t)}" style="--accent:#E7DCCB"><span class="col-card__media"><img src="${esc(t.image||first.image)}" alt="${esc(t.imageAlt||first.alt||t.name)}" width="600" height="450" loading="lazy"></span><span class="col-card__label">${esc(t.name)} <span class="circle" aria-hidden="true">→</span></span></a></li>`;}).join('');});
   const byId = Object.fromEntries([...catalog, ...products].map(p => [p.id, p]));
   const inr = n => '₹' + n.toLocaleString('en-IN');
@@ -170,6 +182,9 @@ window.CBP_READY = (async () => {
     toast(on ? 'Saved to your wishlist' : 'Removed from wishlist');
   });
 
+  /* Catalogue-dependent cart rendering starts only after the catalogue resolves. */
+  const { open: openDrawer, close: closeDrawer } = CBP_DRAWERS;
+  const cartDrawer = $('[data-cart]');
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeSearch(); closeMenus(); }
   });
